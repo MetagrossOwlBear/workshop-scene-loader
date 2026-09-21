@@ -116,12 +116,48 @@ function labelItem(mainId, text, x, y, dpi, dim) {
 async function buildScene(scene) {
   if (!scene || !Array.isArray(scene.objects)) throw new Error("That text isn't a scene. It needs an \"objects\" list.");
   const dpi = await OBR.scene.grid.getDpi();
-  const ox = +$("offX").value || 0, oy = +$("offY").value || 0;
+  let ox = +$("offX").value || 0, oy = +$("offY").value || 0;
+  if ($("atCentre").checked) {
+    const c = await screenCentre();
+    ox = Math.round(c.x / dpi - (scene.cols || 10) / 2);
+    oy = Math.round(c.y / dpi - (scene.rows || 10) / 2);
+  }
   const items = [];
   for (const o of scene.objects) items.push(...buildPiece(o, dpi, ox, oy));
   await OBR.scene.items.addItems(items);
   await OBR.scene.setMetadata({ [SCENE]: { name: scene.name || "", round: scene.round || 1, status: scene.status || "", cols: scene.cols, rows: scene.rows, ox, oy } });
   return scene.objects.length;
+}
+
+/* ---------- Moving the whole loaded map ---------- */
+async function screenCentre() {
+  const w = await OBR.viewport.getWidth(), h = await OBR.viewport.getHeight();
+  return OBR.viewport.inverseTransformPoint({ x: w / 2, y: h / 2 });
+}
+async function moveAll(dxCells, dyCells) {
+  const dpi = await OBR.scene.grid.getDpi();
+  const dx = Math.round(dxCells) * dpi, dy = Math.round(dyCells) * dpi;
+  if (!dx && !dy) return;
+  const mains = await OBR.scene.items.getItems((i) => i.metadata && i.metadata[OBJ]);
+  if (!mains.length) { say("There's no loaded map to move."); return; }
+  const kids = await OBR.scene.items.getItems((i) => i.metadata && i.metadata[CHILD]);
+  const probe = kids[0] && { id: kids[0].id, x: kids[0].position.x, y: kids[0].position.y };
+  await OBR.scene.items.updateItems(mains.map((i) => i.id), (ds) => { for (const d of ds) { d.position.x += dx; d.position.y += dy; } });
+  if (probe) {
+    // Attached pieces normally follow their parent; move them ourselves only if they didn't.
+    await new Promise((r) => setTimeout(r, 300));
+    const [after] = await OBR.scene.items.getItems([probe.id]);
+    if (after && after.position.x === probe.x && after.position.y === probe.y) {
+      await OBR.scene.items.updateItems(kids.map((i) => i.id), (ds) => { for (const d of ds) { d.position.x += dx; d.position.y += dy; } });
+    }
+  }
+  const all = await OBR.scene.getMetadata();
+  const meta = all[SCENE] || {};
+  await OBR.scene.setMetadata({ [SCENE]: { ...meta, ox: (meta.ox || 0) + Math.round(dxCells), oy: (meta.oy || 0) + Math.round(dyCells) } });
+}
+async function sceneOrigin() {
+  const meta = (await OBR.scene.getMetadata())[SCENE] || {};
+  return { ox: meta.ox || 0, oy: meta.oy || 0, cols: meta.cols || 10, rows: meta.rows || 10 };
 }
 
 /* ---------- Items -> scene ---------- */
@@ -206,6 +242,7 @@ let isGM = false;
 OBR.onReady(async () => {
   isGM = (await OBR.player.getRole()) === "GM";
   $("gmTools").hidden = !isGM;
+  $("moveTools").hidden = !isGM;
   const start = async () => { try { await refreshList(); } catch (e) {} };
   if (await OBR.scene.isReady()) start();
   OBR.scene.onReadyChange((ready) => { if (ready) start(); });
@@ -216,6 +253,26 @@ OBR.onReady(async () => {
     try { scene = JSON.parse($("sceneIn").value); } catch (e) { say("That text isn't valid scene text. Copy the whole block Claude gave you, including the first { and last }."); return; }
     try { const n = await buildScene(scene); say(`Built ${n} pieces.`); refreshList(); }
     catch (e) { say(e.message || "Couldn't build the scene. Is a scene open in this room?"); }
+  };
+  const step = () => Math.max(1, Math.round(+$("mvStep").value || 1));
+  $("mvLeft").onclick = () => moveAll(-step(), 0);
+  $("mvRight").onclick = () => moveAll(step(), 0);
+  $("mvUp").onclick = () => moveAll(0, -step());
+  $("mvDown").onclick = () => moveAll(0, step());
+  $("mvCentre").onclick = async () => {
+    const dpi = await OBR.scene.grid.getDpi();
+    const c = await screenCentre(), o = await sceneOrigin();
+    await moveAll(Math.round(c.x / dpi - o.cols / 2) - o.ox, Math.round(c.y / dpi - o.rows / 2) - o.oy);
+    say("Map moved to the middle of your screen.");
+  };
+  $("mvToSel").onclick = async () => {
+    const sel = await OBR.player.getSelection();
+    if (!sel || !sel.length) { say("Click a piece on the map first, then press this button."); return; }
+    const dpi = await OBR.scene.grid.getDpi();
+    const b = await OBR.scene.items.getItemBounds(sel);
+    const o = await sceneOrigin();
+    await moveAll(Math.round(b.min.x / dpi) - o.ox, Math.round(b.min.y / dpi) - o.oy);
+    say("Map's top-left moved to the selected item.");
   };
   $("exampleBtn").onclick = async () => {
     try { const r = await fetch("example-return-ledge.json"); $("sceneIn").value = await r.text(); say("Example loaded. Press Build on map."); }
