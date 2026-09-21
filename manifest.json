@@ -4,11 +4,11 @@
   "manifest_version": 1,
   "description": "Builds maps, Bloom sections and creatures from scene text written by Claude, and exports the board back as text.",
   "author": "Meta",
-  "icon": "icon.svg",
+  "icon": "/workshop-scene-loader/icon.svg",
   "action": {
     "title": "Workshop Scene Loader",
-    "icon": "icon.svg",
-    "popover": "index.html",
+    "icon": "/workshop-scene-loader/icon.svg",
+    "popover": "/workshop-scene-loader/index.html",
     "width": 400,
     "height": 640
   },
